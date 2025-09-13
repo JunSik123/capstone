@@ -1,7 +1,8 @@
 import httpx
 from statistics import mean
+from fastapi import HTTPException
 
-BASE = "https://api.open-meteo.com/v1/kma"
+BASE = "https://kma.open-meteo.com/v1/forecast"
 
 
 def _c_to_f(c: float) -> float:
@@ -50,8 +51,11 @@ async def get_daily_summary(lat: float, lon: float, target_date: str):
         "end_date": target_date,
     }
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(BASE, params=params)
-        r.raise_for_status()
+        try:
+            r = await client.get(BASE, params=params)
+            r.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail="KMA forecast API error") from exc
         js = r.json()
 
     daily = js.get("daily", {})

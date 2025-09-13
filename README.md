@@ -196,7 +196,7 @@ curl -G "http://localhost:8000/api/risk" \
 * VWorld Geocoder 2.0 — 주소→좌표, 일 4만건
 * Open-Meteo KMA API — KMA GDPS/LDPS 기반 일/시간별 예보
 * AirKorea OpenAPI — 대기질 예보 통보
-* KMA 보건기상지수(꽃가루 위험지수)
+* KMA 보건기상지수(꽃가루 위험지수) — LivingWthrIdxService 3.0 `getPollenRiskIdxV4`
 * OpenStreetMap Overpass API — landuse/forest/wetland/urban, coastline 근접 추정
 
 ---

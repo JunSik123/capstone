@@ -1,7 +1,8 @@
 import httpx
 from app.config import settings
 
-BASE = "http://apis.data.go.kr/1360000/HealthWthrIdxServiceV3/getPollenRiskIdxV3"
+# KMA Life Weather Index service (3.0) pollen risk endpoint (V4)
+BASE = "http://apis.data.go.kr/1360000/HealthWthrIdxServiceV4/getPollenRiskIdxV4"
 
 async def get_pollen(area_code: str, target_date: str):
     if not settings.KMA_HEALTH_INDEX_KEY_URLENC:
