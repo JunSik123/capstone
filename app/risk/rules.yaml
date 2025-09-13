@@ -1,0 +1,108 @@
+hazards:
+  heat:
+    base:
+      tmax:
+        - {gte: 33, add: 0.5, why: "tmax>=33"}
+        - {gte: 30, add: 0.3, why: "tmax>=30"}
+      hi_max:
+        - {gte: 40, add: 0.5, why: "Heat Index >=40°C"}
+        - {gte: 35, add: 0.3, why: "Heat Index >=35°C"}
+    geo:
+      urban_frac: {gte: 0.5, add: 0.15, why: "urban heat island"}
+      coast_dist_km: {lte: 2, add: 0.1, why: "beach exposure (dehydration)"}
+  cold:
+    base:
+      tmin:
+        - {lte: -10, add: 0.4, why: "tmin<=-10"}
+        - {lte: -5, add: 0.3, why: "tmin<=-5"}
+        - {lte: 0, add: 0.2, why: "tmin<=0"}
+      wind_chill_min:
+        - {lte: -10, add: 0.4, why: "wind chill<=-10"}
+        - {lte: -5, add: 0.3, why: "wind chill<=-5"}
+    geo: {}
+  uv:
+    base:
+      uv_max:
+        - {gte: 9, add: 0.6, why: "UV Very High"}
+        - {gte: 7, add: 0.4, why: "UV High"}
+        - {gte: 5, add: 0.2, why: "UV Moderate"}
+    geo:
+      coast_dist_km: {lte: 5, add: 0.15, why: "sea surface reflect"}
+  pm25:
+    base:
+      category:
+        Bad: {add: 0.6, why: "AirKorea Bad"}
+        Very Bad: {add: 0.8, why: "AirKorea Very Bad"}
+        Moderate: {add: 0.3, why: "AirKorea Moderate"}
+    geo:
+      basin_index: {gte: 0.5, add: 0.05, why: "stagnation"}
+  pollen:
+    base:
+      oak:
+        3: {add: 0.6, why: "Oak Very High"}
+        2: {add: 0.4, why: "Oak High"}
+        1: {add: 0.2, why: "Oak Moderate"}
+    geo:
+      forest_frac: {gte: 0.5, add: 0.2, why: "near forest"}
+  dry:
+    base:
+      rh_min:
+        - {lte: 30, add: 0.6, why: "RH min <=30%"}
+        - {lte: 40, add: 0.4, why: "RH min <=40%"}
+        - {lte: 50, add: 0.2, why: "RH min <=50%"}
+    geo: {}
+
+ingredients:
+  heat:
+    - {kor: "경구수분전해질(ORS)", eng: "oral rehydration salts", reason: "dehydration risk"}
+    - {kor: "자외선차단제(징크옥사이드/옥티녹세이트 등)", eng: "sunscreen", reason: "uv_high"}
+    - {kor: "마찰예방 보호제", eng: "anti-chafing barrier", reason: "sweat_friction"}
+  cold:
+    - {kor: "아세트아미노펜", eng: "acetaminophen", reason: "fever_pain"}
+    - {kor: "이부프로펜", eng: "ibuprofen", reason: "fever_pain"}
+    - {kor: "보습제", eng: "emollient", reason: "dry_skin"}
+    - {kor: "립밤", eng: "lip balm", reason: "chapped_lips"}
+  uv:
+    - {kor: "자외선차단제(징크옥사이드/옥티녹세이트 등)", eng: "sunscreen", reason: "uv_high"}
+    - {kor: "알로에겔", eng: "aloe gel", reason: "after_sun"}
+  pm25:
+    - {kor: "인공눈물(폴리비닐알코올/히알루론산나트륨)", eng: "artificial tears", reason: "eye_irritation"}
+    - {kor: "비강세척용 식염수", eng: "saline nasal spray", reason: "nasal_hygiene"}
+    - {kor: "비충혈제거제(옥시메타졸린/자일로메타졸린)", eng: "topical decongestant", reason: "nasal_congestion"}
+  pollen:
+    - {kor: "비진정성 항히스타민(로라타딘/펙소페나딘/세티리진)", eng: "non-sedating antihistamine", reason: "allergic_rhinitis"}
+    - {kor: "비강용 스테로이드(플루티카손/모메타손)", eng: "intranasal steroid", reason: "moderate_to_high"}
+    - {kor: "인공눈물", eng: "artificial tears", reason: "itchy_eyes"}
+  dry:
+    - {kor: "보습제", eng: "emollient", reason: "very_dry_air"}
+    - {kor: "인공눈물", eng: "artificial tears", reason: "dry_eye"}
+    - {kor: "식염수 스프레이", eng: "saline nasal spray", reason: "nasal_dryness"}
+
+advice:
+  heat:
+    - {category: "oral_rehydration_salts", reason: "heat_high"}
+    - {category: "sunscreen", reason: "uv_and_heat_outdoor"}
+    - {category: "cooling_gel_or_sheet", reason: "cooling"}
+    - {category: "anti_chafing_barrier", reason: "sweat_friction"}
+  cold:
+    - {category: "emollient", reason: "dry_skin_cold"}
+    - {category: "lip_balm", reason: "chapped_lips"}
+    - {category: "analgesic_antipyretic", reason: "fever_management"}
+  uv:
+    - {category: "sunscreen", reason: "uv_high"}
+    - {category: "after_sun_gel", reason: "sun_exposure"}
+  pm25:
+    - {category: "kf_mask", reason: "pm25_high"}
+    - {category: "artificial_tears", reason: "eye_irritation"}
+    - {category: "nasal_saline", reason: "nasal_hygiene"}
+  pollen:
+    - {category: "oral_antihistamine_non_sedating", reason: "rhinitis"}
+    - {category: "intranasal_steroid_otc", reason: "moderate_to_high"}
+    - {category: "artificial_tears", reason: "itchy_eyes"}
+  dry:
+    - {category: "emollient", reason: "very_dry_air"}
+    - {category: "artificial_tears", reason: "dry_eye"}
+    - {category: "saline_nasal_spray", reason: "nasal_dryness"}
+
+safety_flags:
+  - "This information does not replace professional diagnosis or treatment. If severe or persistent symptoms occur (e.g., dyspnea, chest pain, high fever), seek medical care immediately."
