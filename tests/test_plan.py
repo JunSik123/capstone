@@ -1,3 +1,6 @@
+import json
+import subprocess
+import sys
 import unittest
 
 from app.models import PlanRequest
@@ -49,6 +52,19 @@ class TravelPlannerTests(unittest.TestCase):
         alerts = {alert["title"] for alert in body["destination_alerts"]}
         self.assertIn("고산 위험", alerts)
         self.assertTrue(any(title.endswith("말라리아") for title in alerts))
+
+    def test_cli_demo_outputs_json(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "app", "--demo", "--format", "json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["days"], 10)
+        self.assertIn("packlist_otc", payload)
+        self.assertGreater(len(payload["packlist_otc"]), 0)
 
 
 if __name__ == "__main__":

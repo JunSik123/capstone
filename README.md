@@ -8,31 +8,20 @@
 ## 빠른 시작
 
 ```bash
-python -m app.main
+python -m app --demo --format text
 ```
 
-서버가 실행되면 `http://127.0.0.1:8000/plan` 으로 POST 요청을 보내 여행 계획을 생성할 수 있습니다. `/healthz` 는 상태 확인 엔드포인트입니다.
+내장된 페루 트레킹 시나리오를 바탕으로 추천 결과가 바로 출력됩니다. JSON 형식이 필요하면 `--format json` 옵션을 사용하세요.
 
-## API 사용 예시
+> 참고: 청사진 문서에는 API 설계가 포함되어 있지만, 현재 저장소의 실행 가능한 코드는 표준 라이브러리 기반 CLI 도구로 제공됩니다.
+
+자체 입력 데이터를 사용하려면 아래와 같이 JSON 파일을 준비한 뒤 경로를 지정합니다.
 
 ```bash
-curl -X POST http://127.0.0.1:8000/plan \
-  -H "Content-Type: application/json" \
-  -d '{
-        "itinerary": [{"place": "Cusco, Peru"}],
-        "dates": {"start": "2025-10-03", "end": "2025-10-12"},
-        "activities": ["trekking"],
-        "profile": {
-          "age_band": "adult",
-          "pregnancy": false,
-          "conditions": ["hypertension"],
-          "allergies": ["aspirin"],
-          "current_meds": ["amlodipine 5 mg qd"]
-        }
-      }'
+python -m app --input my_trip.json --format json
 ```
 
-응답에는 추천 상비약 목록, 처방 상담이 필요한 주제, 예방접종 플래그, 목적지 위험 카드가 구조화되어 포함됩니다.
+표준 출력 대신 파일로 저장하려면 `--output result.txt` 와 같이 출력 경로를 추가하세요.
 
 ## 자동 테스트
 
