@@ -100,20 +100,26 @@
             <div class="live-status" id="camera-status">카메라 대기 중</div>
           </div>
           <div class="capture-controls">
-            <div class="button-group">
-              <button id="start-camera" class="primary">카메라 시작</button>
-              <button id="stop-camera" class="secondary" disabled>정지</button>
-            </div>
-            <div class="button-group">
-              <button id="capture-front" class="primary" disabled>앞면 캡처</button>
-              <button id="capture-back" class="primary" disabled>뒷면 캡처</button>
-              <button id="reset-captures" class="secondary" disabled>다시 촬영</button>
-            </div>
-            <p class="tip">
-              팁: 밝은 배경에서 수직으로 촬영하고 반사를 줄이면 OCR 정확도가 높아집니다.
-            </p>
+          <div class="button-group">
+            <button id="start-camera" class="primary">카메라 시작</button>
+            <button id="stop-camera" class="secondary" disabled>정지</button>
           </div>
+          <div class="button-group">
+            <button id="capture-front" class="primary" disabled>앞면 캡처</button>
+            <button id="capture-back" class="primary" disabled>뒷면 캡처</button>
+            <button id="reset-captures" class="secondary" disabled>다시 촬영</button>
+          </div>
+          <div class="button-group">
+            <input id="upload-front-input" type="file" accept="image/*" hidden />
+            <input id="upload-back-input" type="file" accept="image/*" hidden />
+            <button id="upload-front" type="button" class="secondary">앞면 이미지 업로드</button>
+            <button id="upload-back" type="button" class="secondary">뒷면 이미지 업로드</button>
+          </div>
+          <p class="tip">
+            팁: 밝은 배경에서 수직으로 촬영하고 반사를 줄이면 OCR 정확도가 높아집니다.
+          </p>
         </div>
+      </div>
         <div class="captures-grid">
           <figure data-side="front">
             <figcaption>앞면</figcaption>

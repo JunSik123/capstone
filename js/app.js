@@ -22,6 +22,7 @@ import { PillDatabase } from "./database.js";
 const SERVICE_KEY_STORAGE = "mfds-service-key";
 const RESPONSE_TYPE_STORAGE = "mfds-response-type";
 const DB_METADATA_STORAGE = "mfds-db-metadata";
+const MAX_UPLOAD_DIMENSION = 2048;
 
 const dom = {
   apiForm: document.getElementById("api-form"),
@@ -44,6 +45,10 @@ const dom = {
   captureFront: document.getElementById("capture-front"),
   captureBack: document.getElementById("capture-back"),
   resetCaptures: document.getElementById("reset-captures"),
+  uploadFrontInput: document.getElementById("upload-front-input"),
+  uploadBackInput: document.getElementById("upload-back-input"),
+  uploadFrontButton: document.getElementById("upload-front"),
+  uploadBackButton: document.getElementById("upload-back"),
   frontPreview: document.getElementById("front-preview"),
   backPreview: document.getElementById("back-preview"),
   frontQuality: document.getElementById("front-quality"),
@@ -102,6 +107,7 @@ function init() {
   setupForms();
   setupDatabaseControls();
   setupCameraControls();
+  setupUploadControls();
   setupFeatureForm();
   setupHelpDialog();
   renderColorOptions();
@@ -225,10 +231,33 @@ function setupCameraControls() {
     dom.analysisStatus.textContent = "";
     dom.resultsContainer.innerHTML = "";
     dom.telemetryGrid.innerHTML = "";
+    if (dom.uploadFrontInput) dom.uploadFrontInput.value = "";
+    if (dom.uploadBackInput) dom.uploadBackInput.value = "";
     appendLog("캡처가 초기화되었습니다.");
   });
 
   dom.runAnalysis.addEventListener("click", () => runPipeline());
+}
+
+function setupUploadControls() {
+  dom.uploadFrontButton?.addEventListener("click", () => dom.uploadFrontInput?.click());
+  dom.uploadBackButton?.addEventListener("click", () => dom.uploadBackInput?.click());
+
+  dom.uploadFrontInput?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      await processUploadedImage("front", file);
+    }
+    event.target.value = "";
+  });
+
+  dom.uploadBackInput?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      await processUploadedImage("back", file);
+    }
+    event.target.value = "";
+  });
 }
 
 function setupFeatureForm() {
@@ -484,6 +513,32 @@ async function captureFrame(side) {
   } catch (error) {
     appendLog(`${side} 캡처 실패`, error);
     dom.analysisStatus.textContent = `${side === "front" ? "앞" : "뒤"}면 캡처에 실패했습니다.`;
+  }
+}
+
+async function processUploadedImage(side, file) {
+  const sideLabel = side === "front" ? "앞" : "뒤";
+  try {
+    dom.analysisStatus.textContent = `${sideLabel}면 이미지 불러오는 중...`;
+    const capture = await createCaptureFromFile(file);
+    state.captures[side] = capture;
+    const quality = evaluateCaptureQuality(capture.imageData);
+    const previewElement = side === "front" ? dom.frontPreview : dom.backPreview;
+    const qualityElement = side === "front" ? dom.frontQuality : dom.backQuality;
+    previewElement.src = capture.dataUrl;
+    previewElement.hidden = false;
+    qualityElement.textContent = `품질 ${Math.round(quality.score * 100)}% · 선명도 ${Math.round(quality.sharpness * 100)}%`;
+    qualityElement.dataset.score = quality.score;
+    dom.resetCaptures.disabled = false;
+    updateAnalysisAvailability();
+    dom.analysisStatus.textContent = `${sideLabel}면 이미지가 준비되었습니다.`;
+    appendLog(`${side} 업로드 완료`, {
+      file: { name: file.name, size: file.size, type: file.type },
+      quality,
+    });
+  } catch (error) {
+    appendLog(`${side} 업로드 실패`, error);
+    dom.analysisStatus.textContent = `${sideLabel}면 이미지 처리 실패: ${error.message}`;
   }
 }
 
@@ -872,4 +927,86 @@ function appendLog(message, data) {
   const entry = `[${timestamp}] ${message}${data ? `\n${JSON.stringify(data, null, 2)}` : ""}`;
   dom.debugLog.textContent = `${entry}\n${dom.debugLog.textContent}`.slice(0, 8000);
   console.info(message, data ?? "");
+}
+
+async function createCaptureFromFile(file) {
+  if (!file) {
+    throw new Error("파일이 선택되지 않았습니다.");
+  }
+  if (!file.type.startsWith("image/")) {
+    throw new Error("이미지 파일만 업로드할 수 있습니다.");
+  }
+
+  const dataUrl = await readFileAsDataURL(file);
+  const imageElement = await loadImageElement(dataUrl);
+  const naturalWidth = imageElement.naturalWidth || imageElement.width;
+  const naturalHeight = imageElement.naturalHeight || imageElement.height;
+  if (!naturalWidth || !naturalHeight) {
+    throw new Error("이미지 크기를 확인할 수 없습니다.");
+  }
+
+  const { width, height } = scaleDimensions(naturalWidth, naturalHeight, MAX_UPLOAD_DIMENSION);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    throw new Error("캔버스를 초기화하지 못했습니다.");
+  }
+  ctx.drawImage(imageElement, 0, 0, width, height);
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const normalizedDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
+  return {
+    width,
+    height,
+    canvas,
+    dataUrl: normalizedDataUrl,
+    blob: file,
+    imageData,
+    capturedAt: Date.now(),
+    source: "upload",
+    name: file.name,
+  };
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("파일을 데이터 URL로 변환하지 못했습니다."));
+      }
+    };
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("파일을 읽지 못했습니다."));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("이미지를 불러오지 못했습니다."));
+    image.src = src;
+  });
+}
+
+function scaleDimensions(width, height, maxDimension) {
+  if (!maxDimension) {
+    return { width, height };
+  }
+  const largest = Math.max(width, height);
+  if (!largest || largest <= maxDimension) {
+    return { width, height };
+  }
+  const ratio = maxDimension / largest;
+  return {
+    width: Math.round(width * ratio),
+    height: Math.round(height * ratio),
+  };
 }
