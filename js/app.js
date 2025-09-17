@@ -24,6 +24,7 @@ const SERVICE_KEY_STORAGE = "mfds-service-key";
 const RESPONSE_TYPE_STORAGE = "mfds-response-type";
 const DB_METADATA_STORAGE = "mfds-db-metadata";
 const MAX_UPLOAD_DIMENSION = 2048;
+const FALLBACK_DATASET_URL = "data/mfds-snapshot.json";
 
 const dom = {
   apiForm: document.getElementById("api-form"),
@@ -91,6 +92,7 @@ const state = {
     syncing: false,
     count: 0,
     lastUpdated: null,
+    source: null,
   },
 };
 
@@ -141,6 +143,7 @@ function loadStoredPreferences() {
         state.database.count = Number(parsed.count ?? 0);
         state.database.lastUpdated = parsed.updatedAt ?? null;
         state.database.ready = Boolean(state.database.count);
+        state.database.source = parsed.source ?? null;
         updateDatabaseStatus(parsed);
       } catch (metaError) {
         appendLog("DB 메타데이터 파싱 실패", metaError);
@@ -193,6 +196,7 @@ function setupForms() {
     state.database.ready = false;
     state.database.count = 0;
     state.database.lastUpdated = null;
+    state.database.source = null;
     updateDatabaseStatus();
   });
 }
@@ -428,15 +432,18 @@ async function syncDatabase({ interactive = false } = {}) {
     state.database.ready = lastFetched > 0;
     state.database.lastUpdated = new Date().toISOString();
     state.database.count = lastFetched;
+    state.database.source = "api";
     saveDatabaseMetadata({
       count: lastFetched,
       updatedAt: state.database.lastUpdated,
       baseUrl: mfdsClient.baseUrl,
+      source: state.database.source,
     });
-    updateDatabaseStatus({ count: lastFetched, updatedAt: state.database.lastUpdated });
+    updateDatabaseStatus({ count: lastFetched, updatedAt: state.database.lastUpdated, source: state.database.source });
   } catch (error) {
     appendLog("데이터베이스 동기화 실패", serializeError(error));
-    if (interactive) {
+    const fallbackResult = await tryLoadFallbackSnapshot(error, { interactive });
+    if (!fallbackResult.applied && interactive) {
       const status = Number(error?.status ?? 0);
       let hint = "";
       if (typeof error?.message === "string" && error.message.includes("Failed to fetch")) {
@@ -466,7 +473,9 @@ function updateDatabaseStatus(meta = {}) {
         ? `동기화 중 (${progress.toLocaleString()} / ${total.toLocaleString()})`
         : `${progress.toLocaleString()}건 처리 중...`;
     } else if (state.database.ready) {
-      dom.dbStatusText.textContent = "동기화 완료";
+      const source = meta.source ?? state.database.source ?? null;
+      dom.dbStatusText.textContent =
+        source === "snapshot" ? "동기화 완료 (오프라인 스냅샷)" : "동기화 완료";
     } else {
       dom.dbStatusText.textContent = "동기화 필요";
     }
@@ -475,7 +484,9 @@ function updateDatabaseStatus(meta = {}) {
     if (state.database.ready) {
       const countText = (meta.count ?? state.database.count ?? 0).toLocaleString();
       const updatedAt = meta.updatedAt ?? state.database.lastUpdated;
-      dom.dbMetaText.textContent = `${countText}건 · ${updatedAt ? formatDateTime(updatedAt) : "업데이트 시각 없음"}`;
+      const source = meta.source ?? state.database.source ?? null;
+      const sourceLabel = source === "snapshot" ? " · 오프라인 스냅샷" : "";
+      dom.dbMetaText.textContent = `${countText}건 · ${updatedAt ? formatDateTime(updatedAt) : "업데이트 시각 없음"}${sourceLabel}`;
     } else if (state.database.syncing) {
       dom.dbMetaText.textContent = "API에서 참조 데이터를 내려받는 중";
     } else {
@@ -506,6 +517,57 @@ function saveDatabaseMetadata(meta) {
     localStorage.setItem(DB_METADATA_STORAGE, JSON.stringify(meta));
   } catch (error) {
     appendLog("DB 메타데이터 저장 실패", error);
+  }
+}
+
+async function tryLoadFallbackSnapshot(originalError, { interactive = false } = {}) {
+  try {
+    const response = await fetch(FALLBACK_DATASET_URL, { cache: "no-cache" });
+    if (!response.ok) {
+      throw new Error(`오프라인 스냅샷 요청 실패: ${response.status} ${response.statusText}`);
+    }
+    const snapshot = await response.json();
+    const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+    if (!items.length) {
+      throw new Error("오프라인 스냅샷에 항목이 없습니다.");
+    }
+
+    await pillDatabase.clear();
+    await pillDatabase.bulkPut(items);
+
+    state.database.ready = true;
+    state.database.count = items.length;
+    state.database.source = "snapshot";
+    state.database.lastUpdated = snapshot.updatedAt ?? new Date().toISOString();
+
+    saveDatabaseMetadata({
+      count: state.database.count,
+      updatedAt: state.database.lastUpdated,
+      baseUrl: "offline:snapshot",
+      source: state.database.source,
+    });
+
+    updateDatabaseStatus({
+      count: state.database.count,
+      updatedAt: state.database.lastUpdated,
+      source: state.database.source,
+    });
+
+    const message = `공공데이터 API 오류로 내장된 스냅샷을 불러왔습니다. (${state.database.count.toLocaleString()}건)`;
+    appendLog("오프라인 스냅샷으로 대체", {
+      count: state.database.count,
+      updatedAt: state.database.lastUpdated,
+      originalError: serializeError(originalError),
+    });
+
+    if (interactive && dom.analysisStatus) {
+      dom.analysisStatus.textContent = message;
+    }
+
+    return { applied: true, message };
+  } catch (fallbackError) {
+    appendLog("오프라인 스냅샷 로드 실패", serializeError(fallbackError));
+    return { applied: false, error: fallbackError };
   }
 }
 
