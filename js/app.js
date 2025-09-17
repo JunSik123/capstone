@@ -393,11 +393,23 @@ async function syncDatabase({ interactive = false } = {}) {
     let lastFetched = 0;
     let totalCount = null;
 
+    const retryAttempts = 5;
     await mfdsClient.fetchAll(
       {},
       {
         pageSize: 120,
         collect: false,
+        pageDelayMs: 250,
+        retryAttempts,
+        retryDelayMs: 1200,
+        retryBackoff: 1.8,
+        onRetry: ({ attempt, error, pageNo }) => {
+          const retryMessage = `MFDS 페이지 ${pageNo} 재시도 (${attempt}/${retryAttempts})`;
+          appendLog(retryMessage, serializeError(error));
+          if (interactive) {
+            dom.analysisStatus.textContent = `${retryMessage}: ${error?.message ?? "오류"}`;
+          }
+        },
         onPage: async ({ items, fetched, totalCount: apiTotal }) => {
           if (items.length) {
             await pillDatabase.bulkPut(items);
@@ -423,13 +435,19 @@ async function syncDatabase({ interactive = false } = {}) {
     });
     updateDatabaseStatus({ count: lastFetched, updatedAt: state.database.lastUpdated });
   } catch (error) {
-    appendLog("데이터베이스 동기화 실패", error);
+    appendLog("데이터베이스 동기화 실패", serializeError(error));
     if (interactive) {
-      const hint =
-        typeof error?.message === "string" && error.message.includes("Failed to fetch")
-          ? " (브라우저에서 직접 MFDS API에 접근할 수 없습니다. npm start로 실행된 개발 서버 또는 동등한 프록시를 사용하세요.)"
-          : "";
-      dom.analysisStatus.textContent = `데이터베이스 동기화 실패: ${error.message}${hint}`;
+      const status = Number(error?.status ?? 0);
+      let hint = "";
+      if (typeof error?.message === "string" && error.message.includes("Failed to fetch")) {
+        hint =
+          " (브라우저에서 직접 MFDS API에 접근할 수 없습니다. npm start로 실행된 개발 서버 또는 동등한 프록시를 사용하세요.)";
+      } else if (status === 429) {
+        hint = " (호출 제한에 도달했습니다. 잠시 후 다시 시도해주세요.)";
+      } else if (status >= 500) {
+        hint = " (공공데이터포털 서비스가 불안정합니다. 잠시 후 다시 시도하거나 호출 간격을 늘려보세요.)";
+      }
+      dom.analysisStatus.textContent = `데이터베이스 동기화 실패: ${error?.message ?? "알 수 없는 오류"}${hint}`;
     }
   } finally {
     state.database.syncing = false;
@@ -936,6 +954,68 @@ function appendLog(message, data) {
   const entry = `[${timestamp}] ${message}${data ? `\n${JSON.stringify(data, null, 2)}` : ""}`;
   dom.debugLog.textContent = `${entry}\n${dom.debugLog.textContent}`.slice(0, 8000);
   console.info(message, data ?? "");
+}
+
+function serializeError(error) {
+  if (!error) return null;
+  if (error instanceof Error) {
+    const serialized = {
+      name: error.name,
+      message: error.message,
+    };
+    if (error.status !== undefined) {
+      serialized.status = error.status;
+    } else if (error.statusCode !== undefined) {
+      serialized.status = error.statusCode;
+    }
+    if (error.payload !== undefined) {
+      serialized.payload = summarizePayload(error.payload);
+    }
+    if (error.body) {
+      serialized.body = typeof error.body === "string" ? truncateString(error.body) : error.body;
+    }
+    if (error.stack) {
+      serialized.stack = error.stack;
+    }
+    return serialized;
+  }
+  if (typeof error === "object") {
+    return error;
+  }
+  return { message: String(error) };
+}
+
+function truncateString(value, limit = 400) {
+  if (typeof value !== "string") return value;
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}…`;
+}
+
+function summarizePayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+  const response = payload.response;
+  if (!response || typeof response !== "object") {
+    return payload;
+  }
+  const summary = {};
+  if (response.header) {
+    summary.header = response.header;
+  }
+  if (response.body) {
+    const { pageNo, numOfRows, totalCount, items } = response.body;
+    summary.body = {
+      pageNo,
+      numOfRows,
+      totalCount,
+    };
+    if (Array.isArray(items) && items.length) {
+      summary.body.itemsPreview = items.slice(0, 2);
+      summary.body.itemsCount = items.length;
+    }
+  }
+  return Object.keys(summary).length ? summary : payload;
 }
 
 async function createCaptureFromFile(file) {

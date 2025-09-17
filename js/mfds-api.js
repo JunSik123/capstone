@@ -2,6 +2,11 @@ export const REMOTE_BASE_URL =
   "https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList01";
 const LOCAL_PROXY_PATH = "/proxy/mfds";
 
+const DEFAULT_PAGE_DELAY_MS = 200;
+const DEFAULT_RETRY_ATTEMPTS = 4;
+const DEFAULT_RETRY_DELAY_MS = 1000;
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
 export const DEFAULT_BASE_URL = resolveDefaultBaseUrl();
 
 export const DEFAULT_SERVICE_KEY_ENCODED = "";
@@ -58,21 +63,42 @@ export class MFDSClient {
     });
 
     const response = await fetch(url.toString());
+    const rawBody = await response.text();
+    const parsedBody = this.responseType === "xml" ? null : tryParseJson(rawBody);
+
     if (!response.ok) {
-      throw new Error(`MFDS API 호출 실패: ${response.status} ${response.statusText}`);
+      const error = new Error(
+        buildHttpErrorMessage(response, parsedBody, rawBody) ??
+          `MFDS API 호출 실패: ${response.status} ${response.statusText}`
+      );
+      error.status = response.status;
+      if (parsedBody !== null) {
+        error.payload = parsedBody;
+      } else if (rawBody) {
+        error.body = rawBody;
+      }
+      throw error;
     }
 
     if (this.responseType === "xml") {
-      const text = await response.text();
-      return { raw: text };
+      return { raw: rawBody };
     }
 
-    const payload = await response.json();
-    const header = payload?.response?.header ?? {};
-    if (header.resultCode && header.resultCode !== "00") {
-      throw new Error(`MFDS API 오류: ${header.resultMsg ?? header.resultCode}`);
+    if (!parsedBody) {
+      const parseError = new Error("MFDS API 응답 파싱 실패: JSON 형식이 아닙니다.");
+      parseError.body = rawBody;
+      throw parseError;
     }
-    const body = payload?.response?.body ?? {};
+
+    const header = parsedBody?.response?.header ?? {};
+    if (header.resultCode && header.resultCode !== "00") {
+      const apiError = new Error(`MFDS API 오류: ${header.resultMsg ?? header.resultCode}`);
+      apiError.status = Number(header.resultCode) || undefined;
+      apiError.payload = parsedBody;
+      throw apiError;
+    }
+
+    const body = parsedBody?.response?.body ?? {};
     const items = normalizeItems(body.items);
     return {
       totalCount: Number(body.totalCount ?? items.length ?? 0),
@@ -86,8 +112,12 @@ export class MFDSClient {
     const pageSize = options.pageSize ?? 100;
     const startPage = options.startPage ?? 1;
     const shouldCollect = options.collect ?? true;
-    const delayMs = options.delayMs ?? 0;
+    const pageDelayMs = options.pageDelayMs ?? options.delayMs ?? DEFAULT_PAGE_DELAY_MS;
+    const maxRetries = options.retryAttempts ?? options.maxRetries ?? DEFAULT_RETRY_ATTEMPTS;
+    const retryDelayMs = options.retryDelayMs ?? options.retryDelay ?? DEFAULT_RETRY_DELAY_MS;
+    const retryBackoff = options.retryBackoff ?? options.retryBackoffMultiplier ?? 2;
     const onPage = options.onPage;
+    const onRetry = options.onRetry;
 
     const aggregated = shouldCollect ? [] : null;
     let totalCount = null;
@@ -95,7 +125,22 @@ export class MFDSClient {
     let pageNo = startPage;
 
     while (true) {
-      const response = await this.search({ ...params, pageNo, numOfRows: pageSize });
+      const response = await retryWithBackoff(
+        () => this.search({ ...params, pageNo, numOfRows: pageSize }),
+        {
+          attempts: Math.max(1, maxRetries),
+          initialDelay: Math.max(0, retryDelayMs),
+          multiplier: retryBackoff || 1,
+          shouldRetry: (error) => isRetryableError(error),
+          onRetry: onRetry
+            ? (attemptMeta) =>
+                onRetry({
+                  ...attemptMeta,
+                  pageNo,
+                })
+            : undefined,
+        }
+      );
       const items = response.items ?? [];
       if (totalCount === null && response.totalCount !== undefined) {
         totalCount = Number(response.totalCount);
@@ -122,8 +167,8 @@ export class MFDSClient {
       }
 
       pageNo += 1;
-      if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (pageDelayMs > 0) {
+        await sleep(pageDelayMs);
       }
     }
 
@@ -167,7 +212,11 @@ function normalizeItem(item = {}) {
   return {
     itemSeq: normalizeField(item.ITEM_SEQ),
     itemName: normalizeField(item.ITEM_NAME),
+    itemEngName: normalizeField(item.ITEM_ENG_NAME),
+    itemPermitDate: normalizeField(item.ITEM_PERMIT_DATE || item.PRMS_DT),
+    permitDate: normalizeField(item.PRMS_DT || item.ITEM_PERMIT_DATE),
     entpName: normalizeField(item.ENTP_NAME),
+    entpSeq: normalizeField(item.ENTP_SEQ),
     etcOtcName: normalizeField(item.ETC_OTC_NAME),
     className: normalizeField(item.CLASS_NAME),
     classNo: normalizeField(item.CLASS_NO),
@@ -186,8 +235,16 @@ function normalizeItem(item = {}) {
     imageUrl: normalizeField(item.ITEM_IMAGE),
     markCodeFrontAnal: normalizeField(item.MARK_CODE_FRONT_ANAL),
     markCodeBackAnal: normalizeField(item.MARK_CODE_BACK_ANAL),
+    markCodeFront: normalizeField(item.MARK_CODE_FRONT),
+    markCodeBack: normalizeField(item.MARK_CODE_BACK),
+    markCodeFrontImg: normalizeField(item.MARK_CODE_FRONT_IMG),
+    markCodeBackImg: normalizeField(item.MARK_CODE_BACK_IMG),
+    imageRegisteredAt: normalizeField(item.IMG_REGIST_TS),
+    changeDate: normalizeField(item.CHANGE_DATE),
+    ediCode: normalizeField(item.EDI_CODE),
+    businessNumber: normalizeField(item.BIZRNO),
+    standardCode: normalizeField(item.STD_CD),
     materialName: normalizeField(item.MATERIAL_NAME),
-    permitDate: normalizeField(item.PRMS_DT),
   };
 }
 
@@ -198,4 +255,76 @@ function normalizeServiceKey(key) {
   } catch (_) {
     return key;
   }
+}
+
+function tryParseJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+function buildHttpErrorMessage(response, payload, rawBody = "") {
+  const base = `MFDS API 호출 실패: ${response.status} ${response.statusText}`;
+  const header = payload?.response?.header;
+  const detail = header?.resultMsg || header?.resultCode || extractSnippet(rawBody);
+  return detail ? `${base} (${detail})` : base;
+}
+
+function extractSnippet(text) {
+  if (!text) return "";
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
+}
+
+async function sleep(ms) {
+  if (!ms || ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableError(error) {
+  const status = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
+  if (status && RETRYABLE_STATUS_CODES.has(status)) {
+    return true;
+  }
+  if (!status || status === 0) {
+    const message = String(error?.message ?? "").toLowerCase();
+    if (!message) return true;
+    return ["network", "fetch", "timeout", "failed to fetch", "net::"].some((token) =>
+      message.includes(token)
+    );
+  }
+  return false;
+}
+
+async function retryWithBackoff(fn, options = {}) {
+  const attempts = Math.max(1, options.attempts ?? 1);
+  let attempt = 0;
+  let delay = options.initialDelay ?? 0;
+  const multiplier = options.multiplier && options.multiplier > 0 ? options.multiplier : 1;
+  let lastError;
+
+  while (attempt < attempts) {
+    try {
+      return await fn(attempt);
+    } catch (error) {
+      lastError = error;
+      attempt += 1;
+      const shouldRetryFn = options.shouldRetry ?? (() => true);
+      if (attempt >= attempts || !shouldRetryFn(error, attempt)) {
+        throw error;
+      }
+
+      await options.onRetry?.({ attempt, delay, error });
+      if (delay > 0) {
+        await sleep(delay);
+      }
+      delay = multiplier > 1 ? delay * multiplier : delay;
+    }
+  }
+
+  throw lastError;
 }
