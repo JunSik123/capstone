@@ -1,9 +1,14 @@
 const http = require("http");
+const https = require("https");
 const path = require("path");
 const fs = require("fs");
+const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = __dirname;
+const MFDS_REMOTE_BASE =
+  "https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList01";
+const PROXY_PREFIX = "/proxy/mfds";
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -34,8 +39,75 @@ function resolveFile(filePath) {
   }
 }
 
+function handleProxyRequest(req, res) {
+  if (req.method && req.method.toUpperCase() !== "GET") {
+    res.writeHead(405, {
+      "content-type": "text/plain; charset=utf-8",
+      "access-control-allow-origin": "*",
+    });
+    res.end("Method not allowed");
+    return;
+  }
+
+  const hostHeader = req.headers.host || `localhost:${PORT}`;
+  const incomingUrl = new URL(req.url || "", `http://${hostHeader}`);
+  const targetUrl = new URL(MFDS_REMOTE_BASE);
+
+  incomingUrl.searchParams.forEach((value, key) => {
+    if (value !== undefined && value !== null && value !== "") {
+      targetUrl.searchParams.set(key, value);
+    }
+  });
+
+  if (!targetUrl.searchParams.get("serviceKey")) {
+    res.writeHead(400, {
+      "content-type": "text/plain; charset=utf-8",
+      "access-control-allow-origin": "*",
+    });
+    res.end("Missing serviceKey query parameter");
+    return;
+  }
+
+  const apiRequest = https.get(targetUrl, (apiResponse) => {
+    const headers = {
+      "content-type": apiResponse.headers["content-type"] || "application/json; charset=utf-8",
+      "cache-control": "no-cache",
+      "access-control-allow-origin": "*",
+    };
+    res.writeHead(apiResponse.statusCode || 502, headers);
+    apiResponse.on("error", (error) => {
+      if (!res.headersSent) {
+        res.writeHead(502, {
+          "content-type": "text/plain; charset=utf-8",
+          "access-control-allow-origin": "*",
+        });
+      }
+      res.end(`MFDS proxy stream error: ${error.message}`);
+    });
+    apiResponse.pipe(res);
+  });
+
+  apiRequest.on("error", (error) => {
+    res.writeHead(502, {
+      "content-type": "text/plain; charset=utf-8",
+      "access-control-allow-origin": "*",
+    });
+    res.end(`MFDS proxy error: ${error.message}`);
+  });
+
+  req.on("aborted", () => {
+    apiRequest.destroy();
+  });
+}
+
 const server = http.createServer((req, res) => {
-  const urlPath = decodeURIComponent((req.url || "/").split("?")[0]);
+  const rawUrl = req.url || "/";
+  if (rawUrl.startsWith(PROXY_PREFIX)) {
+    handleProxyRequest(req, res);
+    return;
+  }
+
+  const urlPath = decodeURIComponent(rawUrl.split("?")[0]);
   let relativePath = urlPath;
   if (relativePath.endsWith("/")) {
     relativePath = path.join(relativePath, "index.html");

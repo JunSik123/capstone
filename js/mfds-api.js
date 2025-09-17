@@ -1,5 +1,8 @@
-export const DEFAULT_BASE_URL =
+export const REMOTE_BASE_URL =
   "https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList01";
+const LOCAL_PROXY_PATH = "/proxy/mfds";
+
+export const DEFAULT_BASE_URL = resolveDefaultBaseUrl();
 
 export const DEFAULT_SERVICE_KEY_ENCODED = "";
 export const DEFAULT_SERVICE_KEY_DECODED = "";
@@ -9,6 +12,12 @@ export class MFDSClient {
     this.baseUrl = baseUrl;
     this.serviceKey = serviceKey;
     this.responseType = responseType;
+  }
+
+  setBaseUrl(baseUrl) {
+    if (baseUrl) {
+      this.baseUrl = baseUrl;
+    }
   }
 
   setServiceKey(key) {
@@ -124,6 +133,26 @@ export class MFDSClient {
       items: aggregated ?? [],
     };
   }
+}
+
+function resolveDefaultBaseUrl() {
+  if (typeof window === "undefined") {
+    return REMOTE_BASE_URL;
+  }
+
+  try {
+    const { origin, hostname } = window.location || {};
+    const isLocalHost =
+      hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+
+    if (origin && origin !== "null" && isLocalHost) {
+      return `${origin}${LOCAL_PROXY_PATH}`;
+    }
+  } catch (_) {
+    // fall through to remote base url
+  }
+
+  return REMOTE_BASE_URL;
 }
 
 function normalizeItems(items) {

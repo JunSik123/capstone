@@ -12,6 +12,7 @@ import { recognizeImprint, normalizeImprint } from "./ocr.js";
 import {
   MFDSClient,
   DEFAULT_BASE_URL,
+  REMOTE_BASE_URL,
   DEFAULT_SERVICE_KEY_ENCODED,
   DEFAULT_SERVICE_KEY_DECODED,
 } from "./mfds-api.js";
@@ -322,7 +323,11 @@ function setupHelpDialog() {
 
 function initializeStaticInfo() {
   if (dom.endpointDisplay) {
-    dom.endpointDisplay.textContent = DEFAULT_BASE_URL;
+    const lines = [REMOTE_BASE_URL];
+    if (DEFAULT_BASE_URL !== REMOTE_BASE_URL) {
+      lines.push(`(로컬 프록시: ${DEFAULT_BASE_URL})`);
+    }
+    dom.endpointDisplay.textContent = lines.join("\n");
   }
   if (dom.defaultKeyEncoded) {
     dom.defaultKeyEncoded.textContent = DEFAULT_SERVICE_KEY_ENCODED || "이미지 참고";
@@ -420,7 +425,11 @@ async function syncDatabase({ interactive = false } = {}) {
   } catch (error) {
     appendLog("데이터베이스 동기화 실패", error);
     if (interactive) {
-      dom.analysisStatus.textContent = `데이터베이스 동기화 실패: ${error.message}`;
+      const hint =
+        typeof error?.message === "string" && error.message.includes("Failed to fetch")
+          ? " (브라우저에서 직접 MFDS API에 접근할 수 없습니다. npm start로 실행된 개발 서버 또는 동등한 프록시를 사용하세요.)"
+          : "";
+      dom.analysisStatus.textContent = `데이터베이스 동기화 실패: ${error.message}${hint}`;
     }
   } finally {
     state.database.syncing = false;
