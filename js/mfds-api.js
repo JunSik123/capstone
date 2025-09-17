@@ -1,5 +1,5 @@
 export const REMOTE_BASE_URL =
-  "https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList01";
+  "https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList02";
 const LOCAL_PROXY_PATH = "/proxy/mfds";
 
 const DEFAULT_PAGE_DELAY_MS = 200;
@@ -9,8 +9,10 @@ const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 export const DEFAULT_BASE_URL = resolveDefaultBaseUrl();
 
-export const DEFAULT_SERVICE_KEY_ENCODED = "";
-export const DEFAULT_SERVICE_KEY_DECODED = "";
+export const DEFAULT_SERVICE_KEY_ENCODED =
+  "9lAsn5GBHw%2FtSBCo3XE4uPq7T4nZu0NiM8UPaayX3E%2BPK64xU59HLAcFW8nczk2RENnFIzW5DLcHOdtxIcehtw%3D%3D";
+export const DEFAULT_SERVICE_KEY_DECODED =
+  "9lAsn5GBHw/tSBCo3XE4uPq7T4nZu0NiM8UPaayX3E+PK64xU59HLAcFW8nczk2RENnFIzW5DLcHOdtxIcehtw==";
 
 export class MFDSClient {
   constructor({ serviceKey = "", responseType = "json", baseUrl = DEFAULT_BASE_URL } = {}) {

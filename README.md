@@ -8,7 +8,7 @@
 - **이미지 업로드 지원**: 실물 촬영이 어려운 경우 로컬 이미지를 업로드해 동일한 파이프라인을 테스트할 수 있습니다.
 - **온디바이스 전처리 & 품질 추정**: 배경제거, 선명도/노출 평가, 분할선/형상 감지, 색상 힌트를 브라우저에서 계산합니다.
 - **Tesseract.js OCR 통합**: 각인 텍스트를 인식하고 신뢰도를 추정하여 MFDS 검색 파라미터로 활용합니다.
-- **MFDS 데이터 일괄 동기화**: `https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02` 엔드포인트와 발급 받은 서비스 키로 전체 낱알 식별 데이터를 내려받아 IndexedDB에 저장합니다.
+- **MFDS 데이터 일괄 동기화**: `https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList02` 오퍼레이션과 서비스 키로 전체 낱알 식별 데이터를 내려받아 IndexedDB에 저장합니다.
 - **오프라인 후보 검색**: 동기화된 데이터셋을 기반으로 각인/색상/형상 조건을 빠르게 필터링한 뒤 Late-fusion 재랭킹으로 Top-k 후보를 계산합니다.
 - **오프라인 스냅샷 자동 대체**: 공공데이터포털 API가 500 오류(Policy Falsified 등)로 응답하면 내장된 샘플 스냅샷을 자동으로 불러와 테스트를 계속 진행할 수 있습니다.
 - **후보 재랭킹 로직**: 각인 유사도(Levenshtein), 색상/형상/분할선 일치도, 촬영 품질을 Late-fusion 방식으로 결합합니다.
@@ -18,8 +18,8 @@
 
 ## 사전 준비
 
-1. [공공데이터포털(data.go.kr)](https://www.data.go.kr/)에서 **식품의약품안전처_의약품 낱알식별 정보** 오픈 API를 신청하고 서비스 키(Encoding/Decoding 버전)를 발급받습니다.
-2. 본 저장소는 안내 이미지와 동일한 엔드포인트(`MdcinGrnIdntfcInfoService02`)와 서비스 키를 UI에 기본 값으로 표시합니다. 필요 시 자신의 키로 교체하세요.
+1. [공공데이터포털(data.go.kr)](https://www.data.go.kr/)에서 **식품의약품안전처_의약품 낱알식별 정보** 오픈 API를 신청하고 서비스 키(Encoding/Decoding 버전)를 발급받으면, 자체 프로젝트에서도 안정적으로 사용량을 관리할 수 있습니다.
+2. 본 저장소는 안내 이미지와 동일한 엔드포인트(`MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList02`)와 테스트용 서비스 키를 UI에 기본 값으로 표시합니다. 별도 입력 없이도 바로 동기화를 수행할 수 있으며, 필요 시 자신의 키로 교체하세요.
 3. 데이터 동기화에는 `JSON` 응답이 사용됩니다. `XML`을 선택하면 후보 재랭킹 및 로컬 저장이 동작하지 않습니다.
 4. HTTPS 환경(로컬 개발용으로는 `http://localhost` 예외 허용)에서 실행해야 카메라 권한을 받을 수 있습니다.
 

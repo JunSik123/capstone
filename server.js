@@ -7,7 +7,7 @@ const { URL } = require("url");
 const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = __dirname;
 const MFDS_REMOTE_BASE =
-  "https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList01";
+  "https://apis.data.go.kr/1471000/MdcinGrnIdntfcInfoService02/getMdcinGrnIdntfcInfoList02";
 const PROXY_PREFIX = "/proxy/mfds";
 
 const MIME_TYPES = {
