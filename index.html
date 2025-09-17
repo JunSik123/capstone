@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>알약 식별 테스트 랩</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <noscript>이 웹앱을 사용하려면 JavaScript를 활성화하세요.</noscript>
+    <header class="app-header">
+      <div>
+        <h1>알약 식별 테스트 랩</h1>
+        <p>
+          식품의약품안전처(MFDS) 낱알식별 API에서 내려받은 데이터를 로컬에 저장해 온디바이스 식별 파이프라인을 재현한
+          웹 프로토타입입니다. 실제 모바일 카메라 환경과 비슷한 조건에서 촬영 → 전처리 → 각인 OCR → 로컬 DB 검색 → 후보 재랭킹 과정을 실험해보세요.
+        </p>
+      </div>
+      <div class="header-actions">
+        <button id="toggle-help" class="icon-button" aria-label="도움말 열기">❔</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel" aria-labelledby="api-setup-title">
+        <div class="panel-header">
+          <h2 id="api-setup-title">1. API 및 장치 준비</h2>
+          <span class="panel-helper">공공데이터포털 서비스 키를 등록하고 로컬 데이터베이스를 동기화하세요.</span>
+        </div>
+        <form id="api-form" class="form-grid" autocomplete="off">
+          <label class="form-field">
+            <span>MFDS 서비스 키</span>
+            <input
+              id="service-key-input"
+              name="serviceKey"
+              type="text"
+              placeholder="공공데이터포털에서 발급받은 서비스키"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              required
+            />
+            <small>기기 로컬에만 암호화 없이 저장됩니다. 테스트 후 제거하세요.</small>
+          </label>
+          <label class="form-field">
+            <span>응답 형식</span>
+            <select id="response-format" name="type">
+              <option value="json" selected>JSON</option>
+              <option value="xml">XML</option>
+            </select>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary">서비스 키 저장</button>
+            <button type="button" id="clear-key" class="secondary">삭제</button>
+            <span id="key-status" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+        <div class="api-info-grid">
+          <section class="info-card" aria-labelledby="endpoint-title">
+            <h3 id="endpoint-title">엔드포인트</h3>
+            <code id="endpoint-display" class="code-block" aria-live="polite"></code>
+          </section>
+          <section class="info-card" aria-labelledby="key-title">
+            <h3 id="key-title">기본 서비스 키</h3>
+            <dl>
+              <div>
+                <dt>Encoding</dt>
+                <dd><code id="default-key-encoded" class="code-block"></code></dd>
+              </div>
+              <div>
+                <dt>Decoding</dt>
+                <dd><code id="default-key-decoded" class="code-block"></code></dd>
+              </div>
+            </dl>
+            <small>키는 브라우저 로컬 저장소에만 보관되며 언제든 삭제할 수 있습니다.</small>
+          </section>
+          <section class="info-card database-card" aria-labelledby="db-title">
+            <div class="db-status">
+              <h3 id="db-title">로컬 데이터베이스</h3>
+              <p id="db-status-text" aria-live="polite">동기화 필요</p>
+              <small id="db-meta-text">버튼을 눌러 로컬 DB를 준비하세요.</small>
+            </div>
+            <div class="db-actions">
+              <progress id="db-progress" hidden></progress>
+              <button type="button" id="sync-database" class="secondary">전체 동기화</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="camera-title">
+        <div class="panel-header">
+          <h2 id="camera-title">2. 카메라 캡처</h2>
+          <span class="panel-helper">앞/뒷면을 동일한 조건으로 촬영하면 인식률이 올라갑니다.</span>
+        </div>
+        <div class="camera-wrapper">
+          <div class="live-feed">
+            <video id="live-video" playsinline autoplay muted></video>
+            <canvas id="live-overlay" aria-hidden="true"></canvas>
+            <div class="live-status" id="camera-status">카메라 대기 중</div>
+          </div>
+          <div class="capture-controls">
+            <div class="button-group">
+              <button id="start-camera" class="primary">카메라 시작</button>
+              <button id="stop-camera" class="secondary" disabled>정지</button>
+            </div>
+            <div class="button-group">
+              <button id="capture-front" class="primary" disabled>앞면 캡처</button>
+              <button id="capture-back" class="primary" disabled>뒷면 캡처</button>
+              <button id="reset-captures" class="secondary" disabled>다시 촬영</button>
+            </div>
+            <p class="tip">
+              팁: 밝은 배경에서 수직으로 촬영하고 반사를 줄이면 OCR 정확도가 높아집니다.
+            </p>
+          </div>
+        </div>
+        <div class="captures-grid">
+          <figure data-side="front">
+            <figcaption>앞면</figcaption>
+            <img id="front-preview" alt="앞면 캡처 미리보기" />
+            <output id="front-quality" class="quality-chip" aria-live="polite"></output>
+          </figure>
+          <figure data-side="back">
+            <figcaption>뒷면</figcaption>
+            <img id="back-preview" alt="뒷면 캡처 미리보기" />
+            <output id="back-quality" class="quality-chip" aria-live="polite"></output>
+          </figure>
+        </div>
+        <div class="analysis-actions">
+          <button id="run-analysis" class="accent" disabled>파이프라인 실행</button>
+          <span id="analysis-status" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="pipeline-title">
+        <div class="panel-header">
+          <h2 id="pipeline-title">3. 온디바이스 파이프라인 진행 상황</h2>
+          <span class="panel-helper">실제 모바일 파이프라인과 동일한 단계를 시각화합니다.</span>
+        </div>
+        <ol id="pipeline-steps" class="pipeline-steps" aria-live="polite"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="feature-title">
+        <div class="panel-header">
+          <h2 id="feature-title">4. 추출된 특징 검수 & 보정</h2>
+          <span class="panel-helper">필요 시 각인을 수정하거나 색상을 변경해 재검색할 수 있습니다.</span>
+        </div>
+        <form id="feature-form" class="feature-grid">
+          <label class="form-field">
+            <span>앞면 각인</span>
+            <input id="imprint-front" name="imprintFront" type="text" inputmode="text" autocomplete="off" />
+          </label>
+          <label class="form-field">
+            <span>뒷면 각인</span>
+            <input id="imprint-back" name="imprintBack" type="text" inputmode="text" autocomplete="off" />
+          </label>
+          <label class="form-field">
+            <span>주 색상</span>
+            <select id="color-primary" name="colorPrimary"></select>
+          </label>
+          <label class="form-field">
+            <span>부 색상</span>
+            <select id="color-secondary" name="colorSecondary"></select>
+          </label>
+          <label class="form-field">
+            <span>형상</span>
+            <select id="shape" name="shape"></select>
+          </label>
+          <label class="form-field">
+            <span>분할선</span>
+            <select id="scoreline" name="scoreline">
+              <option value="">자동</option>
+              <option value="" disabled>────────</option>
+              <option value="없음">없음</option>
+              <option value="-">단일(-)</option>
+              <option value="+">십자(+)</option>
+              <option value="기타">기타</option>
+            </select>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary" disabled>로컬 재검색</button>
+            <span id="feature-status" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="results-title">
+        <div class="panel-header">
+          <h2 id="results-title">5. 후보 결과</h2>
+          <span class="panel-helper">동기화된 낱알 식별 데이터와 파이프라인 점수를 결합해 Top 후보를 제시합니다.</span>
+        </div>
+        <div id="results-container" class="results-container" aria-live="polite"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="telemetry-title">
+        <div class="panel-header">
+          <h2 id="telemetry-title">6. 품질 지표 & 로그</h2>
+          <span class="panel-helper">촬영 품질, OCR 확신도, 로컬 검색 시간을 확인하세요.</span>
+        </div>
+        <div id="telemetry-grid" class="telemetry-grid"></div>
+        <details class="log-viewer">
+          <summary>디버그 로그</summary>
+          <pre id="debug-log"></pre>
+        </details>
+      </section>
+    </main>
+
+    <dialog id="help-dialog">
+      <h3>테스트 랩 사용 가이드</h3>
+      <ol>
+        <li>공공데이터포털(<a href="https://www.data.go.kr/" target="_blank" rel="noreferrer noopener">data.go.kr</a>)에서 "식품의약품안전처_의약품 낱알식별 정보" 서비스를 신청하여 서비스 키를 발급받습니다.</li>
+        <li>상단의 "서비스 키 저장" 폼에 키를 입력하고 저장하면 이후 브라우저 로컬에 기억합니다.</li>
+        <li>카메라 권한을 허용한 뒤 앞/뒷면을 촬영합니다. 밝은 배경과 수평 유지가 중요합니다.</li>
+        <li>"파이프라인 실행"을 누르면 전처리 → 각인 OCR → 로컬 데이터베이스 검색 → 재랭킹이 순차적으로 수행됩니다.</li>
+        <li>필요하면 각인/색상/형상을 직접 수정하고 "재검색"을 통해 후보를 보정합니다.</li>
+      </ol>
+      <p>모든 처리는 브라우저에서 로컬로 수행하며, 데이터 동기화 시에만 공공데이터포털 API로 연결됩니다.</p>
+      <div class="dialog-actions">
+        <button id="close-help" class="primary">닫기</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
