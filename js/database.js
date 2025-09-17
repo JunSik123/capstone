@@ -5,17 +5,66 @@ import { deriveScorelineType, normalizeShapeName, levenshtein } from "./scoring.
 const DB_NAME = "mfds-pill-cache";
 const STORE_NAME = "pills";
 
+function isIndexedDbSupported() {
+  try {
+    return typeof indexedDB !== "undefined";
+  } catch (_) {
+    return false;
+  }
+}
+
+function deriveMemoryKey(item) {
+  if (item?.itemSeq) {
+    const trimmed = String(item.itemSeq).trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  const fallbackParts = [item?.itemName, item?.printFront, item?.printBack, item?.entpName]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  if (fallbackParts.length) {
+    return fallbackParts.join("|");
+  }
+  return `memory-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export class PillDatabase {
   constructor({ name = DB_NAME, version = 1 } = {}) {
     this.name = name;
     this.version = version;
     this.dbPromise = null;
+    this.memoryStore = new Map();
+    this.useMemory = !isIndexedDbSupported();
+    this.storageMode = this.useMemory ? "memory" : "indexeddb";
+    if (this.useMemory) {
+      this.dbPromise = Promise.resolve(null);
+    }
   }
 
   async open() {
-    if (this.dbPromise) return this.dbPromise;
+    if (this.dbPromise) {
+      try {
+        return await this.dbPromise;
+      } catch (error) {
+        this.enableMemoryFallback(error);
+        return null;
+      }
+    }
+    if (this.useMemory) {
+      this.dbPromise = Promise.resolve(null);
+      return null;
+    }
+
     this.dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.name, this.version);
+      let request;
+      try {
+        request = indexedDB.open(this.name, this.version);
+      } catch (error) {
+        reject(error);
+        return;
+      }
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -27,43 +76,92 @@ export class PillDatabase {
           store.createIndex("drugShape", "drugShape", { unique: false });
         }
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        this.storageMode = "indexeddb";
+        resolve(request.result);
+      };
       request.onerror = () => reject(request.error);
     });
-    return this.dbPromise;
+
+    try {
+      const db = await this.dbPromise;
+      return db;
+    } catch (error) {
+      this.enableMemoryFallback(error);
+      return null;
+    }
   }
 
   async clear() {
     const db = await this.open();
+    if (this.useMemory || !db) {
+      this.memoryStore.clear();
+      return;
+    }
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.objectStore(STORE_NAME).clear();
+      try {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => {
+          this.enableMemoryFallback(tx.error);
+          this.memoryStore.clear();
+          resolve();
+        };
+        tx.objectStore(STORE_NAME).clear();
+      } catch (error) {
+        this.enableMemoryFallback(error);
+        this.memoryStore.clear();
+        resolve();
+      }
     });
   }
 
   async bulkPut(items = []) {
     if (!items.length) return;
     const db = await this.open();
+    if (this.useMemory || !db) {
+      this.writeToMemory(items);
+      return;
+    }
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      for (const item of items) {
-        store.put(item);
+      try {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        for (const item of items) {
+          store.put(item);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => {
+          this.enableMemoryFallback(tx.error);
+          this.writeToMemory(items);
+          resolve();
+        };
+      } catch (error) {
+        this.enableMemoryFallback(error);
+        this.writeToMemory(items);
+        resolve();
       }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
     });
   }
 
   async count() {
     const db = await this.open();
+    if (this.useMemory || !db) {
+      return this.memoryStore.size;
+    }
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const request = tx.objectStore(STORE_NAME).count();
-      request.onsuccess = () => resolve(request.result ?? 0);
-      request.onerror = () => reject(request.error);
+      try {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const request = tx.objectStore(STORE_NAME).count();
+        request.onsuccess = () => resolve(request.result ?? 0);
+        request.onerror = () => {
+          this.enableMemoryFallback(request.error);
+          resolve(this.memoryStore.size);
+        };
+      } catch (error) {
+        this.enableMemoryFallback(error);
+        resolve(this.memoryStore.size);
+      }
     });
   }
 
@@ -74,17 +172,60 @@ export class PillDatabase {
   async searchByFeatures(features = {}, options = {}) {
     const limit = options.limit ?? 300;
     const db = await this.open();
+    if (this.useMemory || !db) {
+      const items = Array.from(this.memoryStore.values());
+      const scored = scoreCandidates(items, features);
+      return scored.slice(0, limit).map((entry) => entry.item);
+    }
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const store = tx.objectStore(STORE_NAME);
-      const request = store.getAll();
-      request.onsuccess = () => {
-        const items = request.result ?? [];
+      try {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const items = request.result ?? [];
+          const scored = scoreCandidates(items, features);
+          resolve(scored.slice(0, limit).map((entry) => entry.item));
+        };
+        request.onerror = () => {
+          this.enableMemoryFallback(request.error);
+          const items = Array.from(this.memoryStore.values());
+          const scored = scoreCandidates(items, features);
+          resolve(scored.slice(0, limit).map((entry) => entry.item));
+        };
+      } catch (error) {
+        this.enableMemoryFallback(error);
+        const items = Array.from(this.memoryStore.values());
         const scored = scoreCandidates(items, features);
         resolve(scored.slice(0, limit).map((entry) => entry.item));
-      };
-      request.onerror = () => reject(request.error);
+      }
     });
+  }
+
+  getStorageMode() {
+    return this.storageMode;
+  }
+
+  writeToMemory(items = []) {
+    if (!items.length) return;
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const stored = { ...item };
+      const key = deriveMemoryKey(stored);
+      stored.itemSeq = key;
+      this.memoryStore.set(key, stored);
+    }
+  }
+
+  enableMemoryFallback(error) {
+    if (this.useMemory) return;
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("IndexedDB unavailable, falling back to in-memory store", error);
+    }
+    this.useMemory = true;
+    this.storageMode = "memory";
+    this.memoryStore = new Map();
+    this.dbPromise = Promise.resolve(null);
   }
 }
 

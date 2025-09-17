@@ -93,6 +93,7 @@ const state = {
     count: 0,
     lastUpdated: null,
     source: null,
+    storage: null,
   },
 };
 
@@ -101,6 +102,9 @@ const mfdsClient = new MFDSClient({ baseUrl: DEFAULT_BASE_URL });
 const pillDatabase = new PillDatabase();
 let pipelineInstance = null;
 let pipelineStepsMeta = [];
+let storageModeNotified = false;
+
+state.database.storage = pillDatabase.getStorageMode?.() ?? null;
 
 init();
 
@@ -142,9 +146,21 @@ function loadStoredPreferences() {
         const parsed = JSON.parse(storedMeta);
         state.database.count = Number(parsed.count ?? 0);
         state.database.lastUpdated = parsed.updatedAt ?? null;
-        state.database.ready = Boolean(state.database.count);
         state.database.source = parsed.source ?? null;
-        updateDatabaseStatus(parsed);
+        state.database.storage = parsed.storage ?? state.database.storage ?? null;
+        const isPersistent = state.database.storage !== "memory";
+        state.database.ready = Boolean(state.database.count) && isPersistent;
+        if (!isPersistent) {
+          state.database.count = 0;
+          state.database.lastUpdated = null;
+          state.database.source = null;
+        }
+        updateDatabaseStatus({
+          count: parsed.count,
+          updatedAt: parsed.updatedAt,
+          source: parsed.source,
+          storage: parsed.storage,
+        });
       } catch (metaError) {
         appendLog("DB 메타데이터 파싱 실패", metaError);
         updateDatabaseStatus();
@@ -357,18 +373,25 @@ async function ensureDatabaseReady({ force = false, interactive = false } = {}) 
   }
   try {
     const hasAny = await pillDatabase.hasAny();
+    noteDatabaseStorageMode();
+    const storageMode = pillDatabase.getStorageMode?.();
+    if (storageMode) {
+      state.database.storage = storageMode;
+    }
     if (hasAny && !force) {
       if (!state.database.ready) {
         state.database.ready = true;
         if (!state.database.count) {
           state.database.count = await pillDatabase.count();
         }
+        state.database.storage = pillDatabase.getStorageMode?.() ?? state.database.storage;
         updateDatabaseStatus();
       }
       return;
     }
     if (!state.serviceKey) {
-      if (interactive) {
+      const fallbackResult = await tryLoadFallbackSnapshot(new Error("서비스 키 미설정"), { interactive });
+      if (!fallbackResult.applied && interactive) {
         dom.keyStatus.textContent = "서비스 키를 먼저 저장해주세요.";
       }
       updateDatabaseStatus();
@@ -390,10 +413,12 @@ async function syncDatabase({ interactive = false } = {}) {
   const originalType = state.responseType;
 
   try {
+    noteDatabaseStorageMode();
     mfdsClient.setServiceKey(state.serviceKey);
     mfdsClient.setResponseType("json");
 
     await pillDatabase.clear();
+    noteDatabaseStorageMode();
     let lastFetched = 0;
     let totalCount = null;
 
@@ -433,13 +458,20 @@ async function syncDatabase({ interactive = false } = {}) {
     state.database.lastUpdated = new Date().toISOString();
     state.database.count = lastFetched;
     state.database.source = "api";
+    state.database.storage = pillDatabase.getStorageMode?.() ?? state.database.storage;
     saveDatabaseMetadata({
       count: lastFetched,
       updatedAt: state.database.lastUpdated,
       baseUrl: mfdsClient.baseUrl,
       source: state.database.source,
+      storage: state.database.storage,
     });
-    updateDatabaseStatus({ count: lastFetched, updatedAt: state.database.lastUpdated, source: state.database.source });
+    updateDatabaseStatus({
+      count: lastFetched,
+      updatedAt: state.database.lastUpdated,
+      source: state.database.source,
+      storage: state.database.storage,
+    });
   } catch (error) {
     appendLog("데이터베이스 동기화 실패", serializeError(error));
     const fallbackResult = await tryLoadFallbackSnapshot(error, { interactive });
@@ -474,8 +506,12 @@ function updateDatabaseStatus(meta = {}) {
         : `${progress.toLocaleString()}건 처리 중...`;
     } else if (state.database.ready) {
       const source = meta.source ?? state.database.source ?? null;
-      dom.dbStatusText.textContent =
-        source === "snapshot" ? "동기화 완료 (오프라인 스냅샷)" : "동기화 완료";
+      const storage = meta.storage ?? state.database.storage ?? null;
+      let statusText = source === "snapshot" ? "동기화 완료 (오프라인 스냅샷)" : "동기화 완료";
+      if (storage === "memory") {
+        statusText += " · 세션 저장";
+      }
+      dom.dbStatusText.textContent = statusText;
     } else {
       dom.dbStatusText.textContent = "동기화 필요";
     }
@@ -485,12 +521,19 @@ function updateDatabaseStatus(meta = {}) {
       const countText = (meta.count ?? state.database.count ?? 0).toLocaleString();
       const updatedAt = meta.updatedAt ?? state.database.lastUpdated;
       const source = meta.source ?? state.database.source ?? null;
+      const storage = meta.storage ?? state.database.storage ?? null;
       const sourceLabel = source === "snapshot" ? " · 오프라인 스냅샷" : "";
-      dom.dbMetaText.textContent = `${countText}건 · ${updatedAt ? formatDateTime(updatedAt) : "업데이트 시각 없음"}${sourceLabel}`;
+      const storageLabel = storage === "memory" ? " · 세션 저장" : "";
+      dom.dbMetaText.textContent = `${countText}건 · ${updatedAt ? formatDateTime(updatedAt) : "업데이트 시각 없음"}${sourceLabel}${storageLabel}`;
     } else if (state.database.syncing) {
       dom.dbMetaText.textContent = "API에서 참조 데이터를 내려받는 중";
     } else {
-      dom.dbMetaText.textContent = "버튼을 눌러 로컬 DB를 준비하세요.";
+      if ((meta.storage ?? state.database.storage) === "memory") {
+        dom.dbMetaText.textContent =
+          "브라우저가 IndexedDB를 차단하여 세션 전용으로 동작합니다. 버튼을 눌러 데이터를 불러오세요.";
+      } else {
+        dom.dbMetaText.textContent = "버튼을 눌러 로컬 DB를 준비하세요.";
+      }
     }
   }
 }
@@ -512,45 +555,37 @@ function setDatabaseProgress(value, total, { visible = true, indeterminate = fal
   }
 }
 
-function saveDatabaseMetadata(meta) {
-  try {
-    localStorage.setItem(DB_METADATA_STORAGE, JSON.stringify(meta));
-  } catch (error) {
-    appendLog("DB 메타데이터 저장 실패", error);
-  }
-}
-
 async function tryLoadFallbackSnapshot(originalError, { interactive = false } = {}) {
   try {
-    const response = await fetch(FALLBACK_DATASET_URL, { cache: "no-cache" });
-    if (!response.ok) {
-      throw new Error(`오프라인 스냅샷 요청 실패: ${response.status} ${response.statusText}`);
-    }
-    const snapshot = await response.json();
+    const snapshot = await loadFallbackSnapshot();
     const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
     if (!items.length) {
       throw new Error("오프라인 스냅샷에 항목이 없습니다.");
     }
 
     await pillDatabase.clear();
+    noteDatabaseStorageMode();
     await pillDatabase.bulkPut(items);
 
     state.database.ready = true;
     state.database.count = items.length;
     state.database.source = "snapshot";
     state.database.lastUpdated = snapshot.updatedAt ?? new Date().toISOString();
+    state.database.storage = pillDatabase.getStorageMode?.() ?? state.database.storage;
 
     saveDatabaseMetadata({
       count: state.database.count,
       updatedAt: state.database.lastUpdated,
       baseUrl: "offline:snapshot",
       source: state.database.source,
+      storage: state.database.storage,
     });
 
     updateDatabaseStatus({
       count: state.database.count,
       updatedAt: state.database.lastUpdated,
       source: state.database.source,
+      storage: state.database.storage,
     });
 
     const message = `공공데이터 API 오류로 내장된 스냅샷을 불러왔습니다. (${state.database.count.toLocaleString()}건)`;
@@ -568,6 +603,62 @@ async function tryLoadFallbackSnapshot(originalError, { interactive = false } = 
   } catch (fallbackError) {
     appendLog("오프라인 스냅샷 로드 실패", serializeError(fallbackError));
     return { applied: false, error: fallbackError };
+  }
+}
+
+let fallbackSnapshotCache = null;
+
+async function loadFallbackSnapshot() {
+  if (fallbackSnapshotCache) {
+    return fallbackSnapshotCache;
+  }
+
+  let lastError = null;
+
+  if (typeof fetch === "function") {
+    try {
+      const response = await fetch(FALLBACK_DATASET_URL, { cache: "no-cache" });
+      if (response.ok) {
+        fallbackSnapshotCache = await response.json();
+        return fallbackSnapshotCache;
+      }
+      lastError = new Error(`오프라인 스냅샷 요청 실패: ${response.status} ${response.statusText}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  try {
+    const module = await import("../data/mfds-snapshot.json", { assert: { type: "json" } });
+    fallbackSnapshotCache = module?.default ?? module;
+    return fallbackSnapshotCache;
+  } catch (error) {
+    lastError = error;
+  }
+
+  const failure = new Error("오프라인 스냅샷을 불러오지 못했습니다.");
+  if (lastError) {
+    failure.cause = lastError;
+  }
+  throw failure;
+}
+
+function saveDatabaseMetadata(meta) {
+  try {
+    localStorage.setItem(DB_METADATA_STORAGE, JSON.stringify(meta));
+  } catch (error) {
+    appendLog("DB 메타데이터 저장 실패", error);
+  }
+}
+
+function noteDatabaseStorageMode() {
+  if (storageModeNotified) return;
+  const mode = pillDatabase.getStorageMode?.();
+  if (mode === "memory") {
+    storageModeNotified = true;
+    appendLog("IndexedDB를 사용할 수 없어 메모리 기반 로컬 DB로 동작합니다.", {
+      hint: "브라우저 정책 때문에 새로고침하면 데이터가 초기화됩니다.",
+    });
   }
 }
 
