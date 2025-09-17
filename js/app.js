@@ -432,6 +432,7 @@ async function syncDatabase({ interactive = false } = {}) {
         retryAttempts,
         retryDelayMs: 1200,
         retryBackoff: 1.8,
+        requestTimeoutMs: 15000,
         onRetry: ({ attempt, error, pageNo }) => {
           const retryMessage = `MFDS 페이지 ${pageNo} 재시도 (${attempt}/${retryAttempts})`;
           appendLog(retryMessage, serializeError(error));

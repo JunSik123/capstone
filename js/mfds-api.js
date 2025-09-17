@@ -35,7 +35,7 @@ export class MFDSClient {
     this.responseType = type;
   }
 
-  async search(params = {}) {
+  async search(params = {}, options = {}) {
     if (!this.serviceKey) {
       throw new Error("서비스 키가 설정되지 않았습니다.");
     }
@@ -64,7 +64,42 @@ export class MFDSClient {
       }
     });
 
-    const response = await fetch(url.toString());
+    const timeoutMs = Number(options.timeoutMs ?? 0);
+    const supportsAbort = typeof AbortController !== "undefined" && timeoutMs > 0;
+    const controller = supportsAbort ? new AbortController() : null;
+    let timeoutId = null;
+    if (controller) {
+      timeoutId = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch (_) {
+          // ignore abort errors
+        }
+      }, timeoutMs);
+    }
+
+    let response;
+    try {
+      response = await fetch(url.toString(), controller ? { signal: controller.signal } : undefined);
+    } catch (error) {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      if (controller && error?.name === "AbortError") {
+        const timeoutError = new Error(`MFDS API 요청 시간 초과 (${timeoutMs}ms)`);
+        timeoutError.name = "AbortError";
+        timeoutError.status = 408;
+        timeoutError.code = "ETIMEDOUT";
+        timeoutError.cause = error;
+        throw timeoutError;
+      }
+      throw error;
+    }
+
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+
     const rawBody = await response.text();
     const parsedBody = this.responseType === "xml" ? null : tryParseJson(rawBody);
 
@@ -118,6 +153,8 @@ export class MFDSClient {
     const maxRetries = options.retryAttempts ?? options.maxRetries ?? DEFAULT_RETRY_ATTEMPTS;
     const retryDelayMs = options.retryDelayMs ?? options.retryDelay ?? DEFAULT_RETRY_DELAY_MS;
     const retryBackoff = options.retryBackoff ?? options.retryBackoffMultiplier ?? 2;
+    const parsedTimeout = Number(options.requestTimeoutMs ?? 15000);
+    const requestTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 15000;
     const onPage = options.onPage;
     const onRetry = options.onRetry;
 
@@ -128,7 +165,7 @@ export class MFDSClient {
 
     while (true) {
       const response = await retryWithBackoff(
-        () => this.search({ ...params, pageNo, numOfRows: pageSize }),
+        () => this.search({ ...params, pageNo, numOfRows: pageSize }, { timeoutMs: requestTimeoutMs }),
         {
           attempts: Math.max(1, maxRetries),
           initialDelay: Math.max(0, retryDelayMs),
