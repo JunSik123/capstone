@@ -19,6 +19,7 @@ import {
 import { PillPipeline, createDefaultSteps } from "./pipeline.js";
 import { rerankCandidates } from "./scoring.js";
 import { PillDatabase } from "./database.js";
+import offlineSnapshotData from "../data/mfds-snapshot.inline.js";
 
 const SERVICE_KEY_STORAGE = "mfds-service-key";
 const RESPONSE_TYPE_STORAGE = "mfds-response-type";
@@ -361,9 +362,7 @@ function setupDatabaseControls() {
   dom.dbSyncButton?.addEventListener("click", () => {
     ensureDatabaseReady({ force: true, interactive: true });
   });
-  if (state.serviceKey) {
-    ensureDatabaseReady({ force: false, interactive: false });
-  }
+  ensureDatabaseReady({ force: false, interactive: false });
 }
 
 async function ensureDatabaseReady({ force = false, interactive = false } = {}) {
@@ -629,6 +628,14 @@ async function loadFallbackSnapshot() {
     }
   }
 
+  if (!fallbackSnapshotCache && offlineSnapshotData) {
+    const cloned = cloneSnapshotData(offlineSnapshotData);
+    if (cloned) {
+      fallbackSnapshotCache = cloned;
+      return fallbackSnapshotCache;
+    }
+  }
+
   try {
     const module = await import("../data/mfds-snapshot.json", { assert: { type: "json" } });
     fallbackSnapshotCache = module?.default ?? module;
@@ -642,6 +649,25 @@ async function loadFallbackSnapshot() {
     failure.cause = lastError;
   }
   throw failure;
+}
+
+function cloneSnapshotData(data) {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(data);
+    } catch (error) {
+      appendLog("스냅샷 복제 실패(structuredClone)", error);
+    }
+  }
+  try {
+    return JSON.parse(JSON.stringify(data));
+  } catch (error) {
+    appendLog("스냅샷 복제 실패(JSON)", error);
+    return null;
+  }
 }
 
 function saveDatabaseMetadata(meta) {

@@ -33,7 +33,7 @@ npm start
 # 기본 포트: http://localhost:4173
 ```
 
-`npm start`는 경량 Node 서버(`server.js`)를 실행해 정적 파일을 제공하며, `/proxy/mfds` 엔드포인트를 통해 MFDS 오픈 API를 프록시합니다. 브라우저에서 직접 `https://apis.data.go.kr/...`로 호출하면 CORS 정책 때문에 `Failed to fetch` 오류가 발생하므로, 반드시 이 개발 서버(또는 동일한 프록시가 구성된 서버)를 사용해 데이터 동기화를 수행하세요. 만약 정책 변경 등으로 API 호출이 반복해서 실패하면 자동으로 `data/mfds-snapshot.json` 스냅샷을 불러와 최소한의 로컬 DB를 구성합니다.
+`npm start`는 경량 Node 서버(`server.js`)를 실행해 정적 파일을 제공하며, `/proxy/mfds` 엔드포인트를 통해 MFDS 오픈 API를 프록시합니다. 브라우저에서 직접 `https://apis.data.go.kr/...`로 호출하면 CORS 정책 때문에 `Failed to fetch` 오류가 발생하므로, 반드시 이 개발 서버(또는 동일한 프록시가 구성된 서버)를 사용해 데이터 동기화를 수행하세요. 만약 정책 변경 등으로 API 호출이 반복해서 실패하면 자동으로 내장된 스냅샷(`data/mfds-snapshot.inline.js` · `data/mfds-snapshot.json`)을 불러와 최소한의 로컬 DB를 구성합니다. 이 스냅샷은 정적 파일 서버 없이 `file://`로 열어도 즉시 적용됩니다.
 
 ## 사용 흐름
 
